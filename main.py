@@ -30,6 +30,7 @@ os.environ["DISPLAY"] = ":99"
 def start_novnc():
     env = os.environ.copy()
     env["DISPLAY"] = ":99"
+    port = os.environ.get("PORT", "6080")
 
     subprocess.Popen(
         ["x11vnc", "-display", ":99", "-forever", "-shared",
@@ -40,13 +41,13 @@ def start_novnc():
     )
 
     subprocess.Popen(
-        ["websockify", "--web", "/usr/share/novnc/", "6080", "localhost:5900"],
+        ["websockify", "--web", "/usr/share/novnc/", "0.0.0.0:" + port, "localhost:5900"],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
 
     time.sleep(1)
-    print("🖥️ noVNC server started on localhost:6080")
+    print(f"🖥️ noVNC server started on 0.0.0.0:{port}")
 
 def start_virtual_display():
     try:
