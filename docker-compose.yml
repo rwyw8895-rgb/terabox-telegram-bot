@@ -1,0 +1,15 @@
+﻿services:
+  terabox-bot:
+    image: ghcr.io/wroxtaaar/terabox-telegram-bot:latest
+    container_name: terabox-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "127.0.0.1:6080:6080"
+    volumes:
+      - terabox_data:/app/data
+    shm_size: "1gb"
+
+volumes:
+  terabox_data:
