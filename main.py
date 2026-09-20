@@ -760,59 +760,20 @@ from telegram.ext import (
 
 # 1. Load Credentials from environment
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
-TELEGRAM_API_ID = os.environ.get("TELEGRAM_API_ID")
-TELEGRAM_API_HASH = os.environ.get("TELEGRAM_API_HASH")
 
 if not TELEGRAM_BOT_TOKEN:
     raise ValueError("❌ TELEGRAM_BOT_TOKEN is required.")
 
 print("✅ Telegram token loaded.")
+print("ℹ️ Running in standard cloud mode (50 MB limit).")
 
-# 2. Local Telegram Bot API Server (Unlocks 2 GB uploads)
-use_local_server = False
-if TELEGRAM_API_ID and TELEGRAM_API_HASH and os.path.exists("/usr/local/bin/telegram-bot-api"):
-    print("⚡ Starting Local Telegram Bot API Server on port 8081...")
-    subprocess.run(["pkill", "-9", "telegram-bot-api"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    time.sleep(0.5)
-    os.makedirs("/app/data/tg_data", exist_ok=True)
-    os.makedirs("/app/data/tg_temp", exist_ok=True)
-
-    try:
-        requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/logOut", timeout=10)
-    except Exception:
-        pass
-
-    subprocess.Popen([
-        "/usr/local/bin/telegram-bot-api",
-        f"--api-id={TELEGRAM_API_ID}",
-        f"--api-hash={TELEGRAM_API_HASH}",
-        "--local",
-        "--http-port=8081",
-        "--dir=/app/data/tg_data",
-        "--temp-dir=/app/data/tg_temp"
-    ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    time.sleep(2)
-
-    try:
-        check_resp = requests.get(f"http://127.0.0.1:8081/bot{TELEGRAM_BOT_TOKEN}/getMe", timeout=5)
-        if check_resp.status_code == 200:
-            use_local_server = True
-            print("🚀 Local Bot API Server active! Max upload limit: 2,000 MB (2 GB).")
-        else:
-            print("⚠️ Local Bot API Server returned code", check_resp.status_code, "- falling back to cloud (50 MB).")
-    except Exception as e:
-        print("⚠️ Could not reach Local Bot API Server, falling back to cloud (50 MB).", e)
-else:
-    print("ℹ️ Running in standard cloud mode (50 MB limit).")
-    print("💡 Tip: Add TELEGRAM_API_ID & TELEGRAM_API_HASH to unlock 2 GB uploads!")
-
-MAX_UPLOAD_MB = 1950.0 if use_local_server else 49.5
+MAX_UPLOAD_MB = 49.5
 
 # 3. Telegram Handlers & Auto-Unpacker
 download_lock = asyncio.Lock()
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    limit_str = "2 GB" if use_local_server else "50 MB"
+    limit_str = "50 MB"
     await update.message.reply_text(
         f"👋 Send me any TeraBox share link (up to {limit_str}).\n\n"
         "🌐 Supported mirrors:\n"
@@ -988,12 +949,6 @@ async def main():
     try:
         # Run the bot runner code by reproducing its initialization sequence.
         builder = Application.builder().token(TELEGRAM_BOT_TOKEN)
-        if use_local_server:
-            builder = (
-                builder.base_url("http://127.0.0.1:8081/bot")
-                .base_file_url("http://127.0.0.1:8081/file/bot")
-                .local_mode(True)
-            )
 
         global app
         app = builder.build()
