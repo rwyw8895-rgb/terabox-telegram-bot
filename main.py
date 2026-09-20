@@ -42,8 +42,8 @@ def start_novnc():
 
     subprocess.Popen(
         ["websockify", "--web", "/usr/share/novnc/", "0.0.0.0:" + port, "localhost:5900"],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stdout=None,
+        stderr=None,
     )
 
     time.sleep(1)
