@@ -34,7 +34,7 @@ def start_novnc():
 
     subprocess.Popen(
         ["x11vnc", "-display", ":99", "-forever", "-shared",
-         "-rfbport", "5900", "-localhost", "-nopw"],
+         "-rfbport", "5900", "-localhost", "-nopw", "-nowebsocket"],
         env=env,
         stdout=None,
         stderr=None,
