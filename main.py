@@ -26,28 +26,29 @@ for lock in glob.glob(os.path.join(PROFILE_DIR, "Singleton*")):
         pass
 
 os.environ["DISPLAY"] = ":99"
+TERABOX_LOGIN_URL = os.environ.get("TERABOX_LOGIN_URL", "https://www.1024tera.com/")
+NOVNC_PORT = os.environ.get("PORT", "6080")
 
 def start_novnc():
     env = os.environ.copy()
     env["DISPLAY"] = ":99"
-    port = os.environ.get("PORT", "6080")
 
     subprocess.Popen(
         ["x11vnc", "-display", ":99", "-forever", "-shared",
-         "-rfbport", "5900", "-localhost", "-nopw"],
+         "-rfbport", "5900", "-localhost", "-nopw", "-noxdamage"],
         env=env,
-        stdout=None,
-        stderr=None,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
     )
 
     subprocess.Popen(
-        ["websockify", "--web", "/usr/share/novnc/", "0.0.0.0:" + port, "localhost:5900"],
-        stdout=None,
-        stderr=None,
+        ["websockify", "--web", "/usr/share/novnc/", NOVNC_PORT, "localhost:5900"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
     )
 
     time.sleep(1)
-    print(f"🖥️ noVNC server started on 0.0.0.0:{port}")
+    print(f"🖥️ noVNC server started on port {NOVNC_PORT}")
 
 def start_virtual_display():
     try:
@@ -61,12 +62,28 @@ def start_virtual_display():
     except Exception:
         pass
 
-    subprocess.Popen(
+    xvfb_process = subprocess.Popen(
         ["Xvfb", ":99", "-screen", "0", "1280x720x24", "-ac"],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
-    time.sleep(1.5)
+    for _ in range(30):
+        if xvfb_process.poll() is not None:
+            raise RuntimeError("Xvfb exited before display :99 became ready")
+        try:
+            if subprocess.run(
+                ["xdpyinfo", "-display", ":99"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+            ).returncode == 0:
+                break
+        except OSError as error:
+            raise RuntimeError("Unable to check Xvfb display :99") from error
+        time.sleep(0.1)
+    else:
+        xvfb_process.terminate()
+        raise RuntimeError("Xvfb display :99 did not become ready")
 
     env = os.environ.copy()
     env["DISPLAY"] = ":99"
@@ -110,7 +127,7 @@ async def initialize_browser():
     )
     await page.set_viewport_size({"width": 1280, "height": 720})
     await page.goto(
-        "https://www.terabox.app/",
+        TERABOX_LOGIN_URL,
         wait_until="domcontentloaded",
         timeout=120000,
     )
@@ -183,15 +200,14 @@ async def ensure_browser():
 
     try:
         if browser_context and not browser_context.is_closed():
-            while len(browser_context.pages) > 1:
-                p = browser_context.pages[-1]
+            active_page = browser_context.pages[0] if browser_context.pages else await browser_context.new_page()
+            for extra_page in browser_context.pages[1:]:
                 try:
-                    await p.close()
+                    await extra_page.close()
                 except Exception:
-                    break
-            worker_page = await browser_context.new_page()
-            await worker_page.set_viewport_size({"width": 1280, "height": 720})
-            return worker_page
+                    pass
+            await active_page.set_viewport_size({"width": 1280, "height": 720})
+            return active_page
     except Exception:
         pass
 
@@ -234,11 +250,10 @@ async def ensure_browser():
     ''')
 
     anchor_page = browser_context.pages[0] if browser_context.pages else await browser_context.new_page()
-    await anchor_page.goto("https://www.terabox.app/", wait_until="domcontentloaded", timeout=60000)
+    await anchor_page.goto(TERABOX_LOGIN_URL, wait_until="domcontentloaded", timeout=60000)
 
-    worker_page = await browser_context.new_page()
-    await worker_page.set_viewport_size({"width": 1280, "height": 720})
-    return worker_page
+    await anchor_page.set_viewport_size({"width": 1280, "height": 720})
+    return anchor_page
 
 def clean_filename(filename):
     if not filename:
@@ -734,6 +749,11 @@ async def download_terabox(url, job_dir):
             context.remove_listener("download", download_handler)
         except Exception:
             pass
+        for extra_page in context.pages[1:]:
+            try:
+                await extra_page.close()
+            except Exception:
+                pass
 
 print("✅ TeraBox Downloader Engine loaded successfully!")
 
@@ -761,20 +781,59 @@ from telegram.ext import (
 
 # 1. Load Credentials from environment
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+TELEGRAM_API_ID = os.environ.get("TELEGRAM_API_ID")
+TELEGRAM_API_HASH = os.environ.get("TELEGRAM_API_HASH")
 
 if not TELEGRAM_BOT_TOKEN:
     raise ValueError("❌ TELEGRAM_BOT_TOKEN is required.")
 
 print("✅ Telegram token loaded.")
-print("ℹ️ Running in standard cloud mode (50 MB limit).")
 
-MAX_UPLOAD_MB = 49.5
+# 2. Local Telegram Bot API Server (Unlocks 2 GB uploads)
+use_local_server = False
+if TELEGRAM_API_ID and TELEGRAM_API_HASH and os.path.exists("/usr/local/bin/telegram-bot-api"):
+    print("⚡ Starting Local Telegram Bot API Server on port 8081...")
+    subprocess.run(["pkill", "-9", "telegram-bot-api"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    time.sleep(0.5)
+    os.makedirs("/app/data/tg_data", exist_ok=True)
+    os.makedirs("/app/data/tg_temp", exist_ok=True)
+
+    try:
+        requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/logOut", timeout=10)
+    except Exception:
+        pass
+
+    subprocess.Popen([
+        "/usr/local/bin/telegram-bot-api",
+        f"--api-id={TELEGRAM_API_ID}",
+        f"--api-hash={TELEGRAM_API_HASH}",
+        "--local",
+        "--http-port=8081",
+        "--dir=/app/data/tg_data",
+        "--temp-dir=/app/data/tg_temp"
+    ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    time.sleep(2)
+
+    try:
+        check_resp = requests.get(f"http://127.0.0.1:8081/bot{TELEGRAM_BOT_TOKEN}/getMe", timeout=5)
+        if check_resp.status_code == 200:
+            use_local_server = True
+            print("🚀 Local Bot API Server active! Max upload limit: 2,000 MB (2 GB).")
+        else:
+            print("⚠️ Local Bot API Server returned code", check_resp.status_code, "- falling back to cloud (50 MB).")
+    except Exception as e:
+        print("⚠️ Could not reach Local Bot API Server, falling back to cloud (50 MB).", e)
+else:
+    print("ℹ️ Running in standard cloud mode (50 MB limit).")
+    print("💡 Tip: Add TELEGRAM_API_ID & TELEGRAM_API_HASH to unlock 2 GB uploads!")
+
+MAX_UPLOAD_MB = 1950.0 if use_local_server else 49.5
 
 # 3. Telegram Handlers & Auto-Unpacker
 download_lock = asyncio.Lock()
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    limit_str = "50 MB"
+    limit_str = "2 GB" if use_local_server else "50 MB"
     await update.message.reply_text(
         f"👋 Send me any TeraBox share link (up to {limit_str}).\n\n"
         "🌐 Supported mirrors:\n"
@@ -950,6 +1009,12 @@ async def main():
     try:
         # Run the bot runner code by reproducing its initialization sequence.
         builder = Application.builder().token(TELEGRAM_BOT_TOKEN)
+        if use_local_server:
+            builder = (
+                builder.base_url("http://127.0.0.1:8081/bot")
+                .base_file_url("http://127.0.0.1:8081/file/bot")
+                .local_mode(True)
+            )
 
         global app
         app = builder.build()

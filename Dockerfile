@@ -27,9 +27,10 @@ RUN pip install --no-cache-dir -r requirements.txt \
 
 COPY main.py .
 
-RUN mkdir -p /app/data/terabox_profile \
-             /app/data/browser_downloads \
-             /app/data/tg_data \
-             /app/data/tg_temp
+RUN mkdir -p \
+    /app/data/terabox_profile \
+    /app/data/browser_downloads \
+    /app/data/tg_data \
+    /app/data/tg_temp
 
 CMD ["python", "main.py"]
